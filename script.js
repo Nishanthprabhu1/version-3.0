@@ -238,7 +238,7 @@ hands.onResults((results) => {
           
           // --- RING SIZE REDUCED ---
           // Changed factor from 0.7 to 0.5
-          const rWidth = dist * 0.5; 
+          const rWidth = dist * 0.6; 
           const rHeight = (ringImg.height / ringImg.width) * rWidth;
           
           canvasCtx.save(); canvasCtx.translate(mcp.x, mcp.y); canvasCtx.rotate(angle - (Math.PI / 2)); 
