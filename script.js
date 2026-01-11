@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Rings & Bangles Smaller */
+/* script.js - Jewels-Ai Atelier: Anti-Flicker Stabilization */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -37,12 +37,18 @@ let currentCameraMode = 'user'; // 'user' (Front) or 'environment' (Back)
 /* Gallery State */
 let currentLightboxIndex = 0;
 
-/* Voice State (New) */
+/* Voice State */
 let recognition = null;
-let voiceEnabled = true; // Default ON
+let voiceEnabled = true; 
 
-/* Physics State */
+/* Physics & Smoothing State */
 let physics = { earringVelocity: 0, earringAngle: 0 };
+
+// --- STABILIZATION VARIABLES ---
+// Stores the previous frame's calculated values to smooth the transition
+let smoothRing = { x: 0, y: 0, angle: 0, width: 0, height: 0, alpha: 0 };
+let smoothBangle = { x: 0, y: 0, angle: 0, width: 0, height: 0, alpha: 0 };
+const SMOOTHING_FACTOR = 0.4; // 0.1 (Very Slow/Smooth) to 1.0 (Instant/Jittery)
 
 /* Auto-Try & Gallery */
 let autoTryRunning = false;
@@ -51,6 +57,11 @@ let autoTryIndex = 0;
 let autoTryTimeout = null;
 let currentPreviewData = { url: null, name: 'Jewels-Ai_look.png' }; 
 let pendingDownloadAction = null; 
+
+/* --- HELPER: Linear Interpolation for Smoothing --- */
+function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
 
 /* --- 1. FLASH EFFECT --- */
 function triggerFlash() {
@@ -64,33 +75,24 @@ function triggerFlash() {
 /* --- 2. VOICE RECOGNITION AI --- */
 function initVoiceControl() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
     if (SpeechRecognition) {
         recognition = new SpeechRecognition(); 
         recognition.continuous = true; 
         recognition.interimResults = false;
         recognition.lang = 'en-US';
-
         recognition.onstart = () => { };
-
         recognition.onresult = (event) => {
             const command = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
             processVoiceCommand(command);
         };
-
         recognition.onend = () => {
             if (voiceEnabled) {
-                setTimeout(() => {
-                    try { recognition.start(); } catch(e) { }
-                }, 1000); 
+                setTimeout(() => { try { recognition.start(); } catch(e) { } }, 1000); 
             }
         };
-
         recognition.onerror = (event) => { console.warn("Voice Error:", event.error); };
-
         try { recognition.start(); } catch(e) { console.log("Voice start error", e); }
     } else {
-        console.warn("Voice API not supported.");
         const btn = document.getElementById('voice-btn');
         if(btn) btn.style.display = 'none';
     }
@@ -99,17 +101,12 @@ function initVoiceControl() {
 function toggleVoiceControl() {
     const btn = document.getElementById('voice-btn');
     if(!recognition) return;
-
     if (voiceEnabled) {
-        voiceEnabled = false;
-        recognition.stop();
-        btn.innerHTML = '🎙️';
-        btn.classList.add('voice-off');
+        voiceEnabled = false; recognition.stop();
+        btn.innerHTML = '🎙️'; btn.classList.add('voice-off');
     } else {
-        voiceEnabled = true;
-        try { recognition.start(); } catch(e) {}
-        btn.innerHTML = '🎙️';
-        btn.classList.remove('voice-off');
+        voiceEnabled = true; try { recognition.start(); } catch(e) {}
+        btn.innerHTML = '🎙️'; btn.classList.remove('voice-off');
     }
 }
 
@@ -128,7 +125,6 @@ async function fetchFromDrive(category) {
     if (JEWELRY_ASSETS[category]) return;
     const folderId = DRIVE_FOLDERS[category];
     if (!folderId) return;
-
     loadingStatus.style.display = 'block'; loadingStatus.textContent = "Fetching Designs...";
     try {
         const query = `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`;
@@ -136,7 +132,6 @@ async function fetchFromDrive(category) {
         const response = await fetch(url);
         const data = await response.json();
         if (data.error) throw new Error(data.error.message);
-
         JEWELRY_ASSETS[category] = data.files.map(file => {
             const src = file.thumbnailLink ? file.thumbnailLink.replace(/=s\d+$/, "=s3000") : `https://drive.google.com/uc?export=view&id=${file.id}`;
             return { id: file.id, name: file.name, src: src };
@@ -228,35 +223,70 @@ hands.onResults((results) => {
       canvasCtx.translate(w, 0); 
       canvasCtx.scale(-1, 1);
   }
-  // -----------------------------------------------------------
 
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const lm = results.multiHandLandmarks[0];
+
+      // --- 1. RING LOGIC WITH SMOOTHING ---
       if (ringImg && ringImg.complete) {
-          const mcp = { x: lm[13].x * w, y: lm[13].y * h }; const pip = { x: lm[14].x * w, y: lm[14].y * h };
-          const angle = calculateAngle(mcp, pip); const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
+          const mcp = { x: lm[13].x * w, y: lm[13].y * h }; 
+          const pip = { x: lm[14].x * w, y: lm[14].y * h };
           
-          // --- RING SIZE REDUCED ---
-          // Changed factor from 0.7 to 0.5
-          const rWidth = dist * 0.6; 
-          const rHeight = (ringImg.height / ringImg.width) * rWidth;
-          
-          canvasCtx.save(); canvasCtx.translate(mcp.x, mcp.y); canvasCtx.rotate(angle - (Math.PI / 2)); 
-          canvasCtx.drawImage(ringImg, -rWidth/2, dist * 0.15, rWidth, rHeight); canvasCtx.restore();
+          const rawAngle = calculateAngle(mcp, pip); 
+          const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
+          const rawWidth = dist * 0.5; // (Size Reduced 0.5)
+          const rawHeight = (ringImg.height / ringImg.width) * rawWidth;
+
+          // Apply Smoothing
+          smoothRing.x = lerp(smoothRing.x, mcp.x, SMOOTHING_FACTOR);
+          smoothRing.y = lerp(smoothRing.y, mcp.y, SMOOTHING_FACTOR);
+          smoothRing.angle = lerp(smoothRing.angle, rawAngle, SMOOTHING_FACTOR);
+          smoothRing.width = lerp(smoothRing.width, rawWidth, SMOOTHING_FACTOR);
+          smoothRing.height = lerp(smoothRing.height, rawHeight, SMOOTHING_FACTOR);
+          smoothRing.alpha = lerp(smoothRing.alpha, 1, 0.2); // Fade in
+
+          canvasCtx.save(); 
+          canvasCtx.globalAlpha = smoothRing.alpha;
+          canvasCtx.translate(smoothRing.x, smoothRing.y); 
+          canvasCtx.rotate(smoothRing.angle - (Math.PI / 2)); 
+          // Re-calculate dist based on smoothed width to keep offset proportional
+          const smoothedDist = smoothRing.width / 0.5; 
+          canvasCtx.drawImage(ringImg, -smoothRing.width/2, smoothedDist * 0.15, smoothRing.width, smoothRing.height); 
+          canvasCtx.restore();
+      } else {
+          smoothRing.alpha = lerp(smoothRing.alpha, 0, 0.2); // Fade out if no ring selected
       }
+
+      // --- 2. BANGLE LOGIC WITH SMOOTHING ---
       if (bangleImg && bangleImg.complete) {
-          const wrist = { x: lm[0].x * w, y: lm[0].y * h }; const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
-          const indexMcp = { x: lm[5].x * w, y: lm[5].y * h }; const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
-          const armAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h });
+          const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
+          const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
+          const indexMcp = { x: lm[5].x * w, y: lm[5].y * h }; 
+          const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
+          const rawAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h });
           
-          // --- BANGLE SIZE REDUCED ---
-          // Changed factor from 1.6 to 1.25
-          const bWidth = wristWidth * 1.25; 
-          const bHeight = (bangleImg.height / bangleImg.width) * bWidth;
-          
-          canvasCtx.save(); canvasCtx.translate(wrist.x, wrist.y); canvasCtx.rotate(armAngle - (Math.PI / 2));
-          canvasCtx.drawImage(bangleImg, -bWidth/2, -bHeight/2, bWidth, bHeight); canvasCtx.restore();
+          const rawWidth = wristWidth * 1.25; // (Size Reduced 1.25)
+          const rawHeight = (bangleImg.height / bangleImg.width) * rawWidth;
+
+          // Apply Smoothing
+          smoothBangle.x = lerp(smoothBangle.x, wrist.x, SMOOTHING_FACTOR);
+          smoothBangle.y = lerp(smoothBangle.y, wrist.y, SMOOTHING_FACTOR);
+          smoothBangle.angle = lerp(smoothBangle.angle, rawAngle, SMOOTHING_FACTOR);
+          smoothBangle.width = lerp(smoothBangle.width, rawWidth, SMOOTHING_FACTOR);
+          smoothBangle.height = lerp(smoothBangle.height, rawHeight, SMOOTHING_FACTOR);
+          smoothBangle.alpha = lerp(smoothBangle.alpha, 1, 0.2);
+
+          canvasCtx.save(); 
+          canvasCtx.globalAlpha = smoothBangle.alpha;
+          canvasCtx.translate(smoothBangle.x, smoothBangle.y); 
+          canvasCtx.rotate(smoothBangle.angle - (Math.PI / 2));
+          canvasCtx.drawImage(bangleImg, -smoothBangle.width/2, -smoothBangle.height/2, smoothBangle.width, smoothBangle.height); 
+          canvasCtx.restore();
+      } else {
+          smoothBangle.alpha = lerp(smoothBangle.alpha, 0, 0.2);
       }
+
+      // Gesture Logic
       if (!autoTryRunning) {
           const now = Date.now();
           if (now - lastGestureTime > GESTURE_COOLDOWN) {
@@ -268,7 +298,12 @@ hands.onResults((results) => {
               if (now - lastGestureTime > 100) previousHandX = indexTip.x;
           }
       }
-  } else { previousHandX = null; }
+  } else { 
+      previousHandX = null; 
+      // Fade out if hand is lost
+      smoothRing.alpha = lerp(smoothRing.alpha, 0, 0.2);
+      smoothBangle.alpha = lerp(smoothBangle.alpha, 0, 0.2);
+  }
   canvasCtx.restore();
 });
 
