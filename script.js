@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Chain Moved Up 5% */
+/* script.js - Jewels-Ai Atelier: Chain Up 10% & Earrings Up 25% */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -292,8 +292,8 @@ faceMesh.onResults((results) => {
       const distToRight = Math.hypot(nose.x - rightEar.x, nose.y - rightEar.y);
       const ratio = distToLeft / (distToLeft + distToRight);
 
-      // --- EARRING PLACEMENT (Preserved Previous Logic) ---
-      // 1. Vertical: -eh * 0.20 (Lifted 20%)
+      // --- EARRING PLACEMENT UPDATE ---
+      // 1. Vertical: -eh * 0.25 (Total 25% lift)
       // 2. Horizontal: ew * 0.05 (Outer 5% shift)
       const xShift = ew * 0.05; 
 
@@ -301,24 +301,24 @@ faceMesh.onResults((results) => {
           canvasCtx.save(); 
           canvasCtx.translate(leftEar.x, leftEar.y); 
           canvasCtx.rotate(physics.earringAngle); 
-          canvasCtx.drawImage(earringImg, (-ew/2) - xShift, -eh * 0.20, ew, eh); 
+          // 132 is Right Cheek (Screen Left in raw frame). Subtract X to move further left (out).
+          canvasCtx.drawImage(earringImg, (-ew/2) - xShift, -eh * 0.25, ew, eh); 
           canvasCtx.restore(); 
       }
       if (ratio < 0.8) { 
           canvasCtx.save(); 
           canvasCtx.translate(rightEar.x, rightEar.y); 
           canvasCtx.rotate(physics.earringAngle); 
-          canvasCtx.drawImage(earringImg, (-ew/2) + xShift, -eh * 0.20, ew, eh); 
+          // 361 is Left Cheek (Screen Right in raw frame). Add X to move further right (out).
+          canvasCtx.drawImage(earringImg, (-ew/2) + xShift, -eh * 0.25, ew, eh); 
           canvasCtx.restore(); 
       }
     }
-    
-    // --- CHAIN/NECKLACE PLACEMENT UPDATE ---
     if (necklaceImg && necklaceImg.complete) {
       let nw = earDist * 0.85; let nh = (necklaceImg.height/necklaceImg.width) * nw;
-      
-      // Changed from 'earDist * 0.2' to 'earDist * 0.15' to move chain UP by 5%
-      canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.15), nw, nh);
+      // --- NECKLACE PLACEMENT UPDATE ---
+      // Changed offset from (earDist*0.2) to (earDist*0.1) to lift it 10% upwards
+      canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.1), nw, nh);
     }
   }
   canvasCtx.restore();
