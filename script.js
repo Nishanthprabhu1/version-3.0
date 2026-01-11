@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Anti-Shake Added (Smoothing) */
+/* script.js - Jewels-Ai Atelier: Rings 0.6, Smoothing & Positions Fixed */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -44,8 +44,8 @@ let voiceEnabled = true;
 /* Physics & Smoothing State */
 let physics = { earringVelocity: 0, earringAngle: 0 };
 
-// --- NEW SMOOTHING VARIABLES FOR HANDS ---
-const SMOOTH_FACTOR = 0.25; // Lower = smoother, Higher = more responsive
+// --- SMOOTHING VARIABLES ---
+const SMOOTH_FACTOR = 0.25; 
 let handSmoother = {
     active: false,
     ring: { x: 0, y: 0, angle: 0, size: 0 },
@@ -60,7 +60,7 @@ let autoTryTimeout = null;
 let currentPreviewData = { url: null, name: 'Jewels-Ai_look.png' }; 
 let pendingDownloadAction = null; 
 
-/* --- HELPER: LERP (Linear Interpolation) --- */
+/* --- HELPER: LERP --- */
 function lerp(start, end, amt) {
     return (1 - amt) * start + amt * end;
 }
@@ -202,7 +202,7 @@ async function shareSingleSnapshot() {
     else alert("Share not supported.");
 }
 
-/* --- 5. PHYSICS & AI CORE (UPDATED WITH SMOOTHING) --- */
+/* --- 5. PHYSICS & AI CORE (UPDATED: RING 0.6) --- */
 function calculateAngle(p1, p2) { return Math.atan2(p2.y - p1.y, p2.x - p1.x); }
 
 const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
@@ -228,7 +228,9 @@ hands.onResults((results) => {
       const pip = { x: lm[14].x * w, y: lm[14].y * h };
       const targetRingAngle = calculateAngle(mcp, pip) - (Math.PI / 2);
       const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
-      const targetRingWidth = dist * 0.5; // KEPT 0.5 SIZE
+      
+      // --- UPDATE: RING SIZE TO 0.6 ---
+      const targetRingWidth = dist * 0.6; 
 
       // 2. Calculate TARGET Bangle Values
       const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
@@ -240,12 +242,10 @@ hands.onResults((results) => {
 
       // 3. Apply Smoothing (Lerp)
       if (!handSmoother.active) {
-          // First frame detected? Snap instantly to avoid flying jewelry
           handSmoother.ring = { x: mcp.x, y: mcp.y, angle: targetRingAngle, size: targetRingWidth };
           handSmoother.bangle = { x: wrist.x, y: wrist.y, angle: targetArmAngle, size: targetBangleWidth };
           handSmoother.active = true;
       } else {
-          // Subsequent frames? Smooth it out
           handSmoother.ring.x = lerp(handSmoother.ring.x, mcp.x, SMOOTH_FACTOR);
           handSmoother.ring.y = lerp(handSmoother.ring.y, mcp.y, SMOOTH_FACTOR);
           handSmoother.ring.angle = lerp(handSmoother.ring.angle, targetRingAngle, SMOOTH_FACTOR);
@@ -263,9 +263,10 @@ hands.onResults((results) => {
           canvasCtx.save(); 
           canvasCtx.translate(handSmoother.ring.x, handSmoother.ring.y); 
           canvasCtx.rotate(handSmoother.ring.angle); 
-          // Kept dist*0.15 offset (approximated by size/0.5 * 0.15 = size * 0.3)
-          // To be safe, we calculate dist from current size: dist = size / 0.5
-          const currentDist = handSmoother.ring.size / 0.5;
+          
+          // --- UPDATE: ADJUST OFFSET FOR 0.6 SCALE ---
+          // dist = size / 0.6. Offset = dist * 0.15
+          const currentDist = handSmoother.ring.size / 0.6;
           canvasCtx.drawImage(ringImg, -handSmoother.ring.size/2, currentDist * 0.15, handSmoother.ring.size, rHeight); 
           canvasCtx.restore();
       }
