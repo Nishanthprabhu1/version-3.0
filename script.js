@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Chain Up 10% & Earrings Up 25% */
+/* script.js - Jewels-Ai Atelier: Rings & Bangles Smaller */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -235,7 +235,12 @@ hands.onResults((results) => {
       if (ringImg && ringImg.complete) {
           const mcp = { x: lm[13].x * w, y: lm[13].y * h }; const pip = { x: lm[14].x * w, y: lm[14].y * h };
           const angle = calculateAngle(mcp, pip); const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
-          const rWidth = dist * 0.7; const rHeight = (ringImg.height / ringImg.width) * rWidth;
+          
+          // --- RING SIZE REDUCED ---
+          // Changed factor from 0.7 to 0.5
+          const rWidth = dist * 0.5; 
+          const rHeight = (ringImg.height / ringImg.width) * rWidth;
+          
           canvasCtx.save(); canvasCtx.translate(mcp.x, mcp.y); canvasCtx.rotate(angle - (Math.PI / 2)); 
           canvasCtx.drawImage(ringImg, -rWidth/2, dist * 0.15, rWidth, rHeight); canvasCtx.restore();
       }
@@ -243,7 +248,12 @@ hands.onResults((results) => {
           const wrist = { x: lm[0].x * w, y: lm[0].y * h }; const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
           const indexMcp = { x: lm[5].x * w, y: lm[5].y * h }; const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
           const armAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h });
-          const bWidth = wristWidth * 1.6; const bHeight = (bangleImg.height / bangleImg.width) * bWidth;
+          
+          // --- BANGLE SIZE REDUCED ---
+          // Changed factor from 1.6 to 1.25
+          const bWidth = wristWidth * 1.25; 
+          const bHeight = (bangleImg.height / bangleImg.width) * bWidth;
+          
           canvasCtx.save(); canvasCtx.translate(wrist.x, wrist.y); canvasCtx.rotate(armAngle - (Math.PI / 2));
           canvasCtx.drawImage(bangleImg, -bWidth/2, -bHeight/2, bWidth, bHeight); canvasCtx.restore();
       }
@@ -292,7 +302,7 @@ faceMesh.onResults((results) => {
       const distToRight = Math.hypot(nose.x - rightEar.x, nose.y - rightEar.y);
       const ratio = distToLeft / (distToLeft + distToRight);
 
-      // --- EARRING PLACEMENT UPDATE ---
+      // --- EARRING PLACEMENT (PRESERVED) ---
       // 1. Vertical: -eh * 0.25 (Total 25% lift)
       // 2. Horizontal: ew * 0.05 (Outer 5% shift)
       const xShift = ew * 0.05; 
@@ -301,7 +311,6 @@ faceMesh.onResults((results) => {
           canvasCtx.save(); 
           canvasCtx.translate(leftEar.x, leftEar.y); 
           canvasCtx.rotate(physics.earringAngle); 
-          // 132 is Right Cheek (Screen Left in raw frame). Subtract X to move further left (out).
           canvasCtx.drawImage(earringImg, (-ew/2) - xShift, -eh * 0.25, ew, eh); 
           canvasCtx.restore(); 
       }
@@ -309,15 +318,14 @@ faceMesh.onResults((results) => {
           canvasCtx.save(); 
           canvasCtx.translate(rightEar.x, rightEar.y); 
           canvasCtx.rotate(physics.earringAngle); 
-          // 361 is Left Cheek (Screen Right in raw frame). Add X to move further right (out).
           canvasCtx.drawImage(earringImg, (-ew/2) + xShift, -eh * 0.25, ew, eh); 
           canvasCtx.restore(); 
       }
     }
     if (necklaceImg && necklaceImg.complete) {
       let nw = earDist * 0.85; let nh = (necklaceImg.height/necklaceImg.width) * nw;
-      // --- NECKLACE PLACEMENT UPDATE ---
-      // Changed offset from (earDist*0.2) to (earDist*0.1) to lift it 10% upwards
+      // --- NECKLACE PLACEMENT (PRESERVED) ---
+      // Offset (earDist*0.1) to lift it 10% upwards
       canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.1), nw, nh);
     }
   }
