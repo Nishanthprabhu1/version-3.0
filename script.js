@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Rings 0.6, Smoothing & Positions Fixed */
+/* script.js - Jewels-Ai Atelier: Skin Smoothing Removed */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -202,7 +202,7 @@ async function shareSingleSnapshot() {
     else alert("Share not supported.");
 }
 
-/* --- 5. PHYSICS & AI CORE (UPDATED: RING 0.6) --- */
+/* --- 5. PHYSICS & AI CORE --- */
 function calculateAngle(p1, p2) { return Math.atan2(p2.y - p1.y, p2.x - p1.x); }
 
 const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
@@ -223,24 +223,21 @@ hands.onResults((results) => {
       const lm = results.multiHandLandmarks[0];
       
       // --- SMOOTHING LOGIC ---
-      // 1. Calculate TARGET Ring Values
       const mcp = { x: lm[13].x * w, y: lm[13].y * h }; 
       const pip = { x: lm[14].x * w, y: lm[14].y * h };
       const targetRingAngle = calculateAngle(mcp, pip) - (Math.PI / 2);
       const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
       
-      // --- UPDATE: RING SIZE TO 0.6 ---
+      // --- RING SIZE: 0.6 ---
       const targetRingWidth = dist * 0.6; 
 
-      // 2. Calculate TARGET Bangle Values
       const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
       const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
       const indexMcp = { x: lm[5].x * w, y: lm[5].y * h };
       const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
       const targetArmAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h }) - (Math.PI / 2);
-      const targetBangleWidth = wristWidth * 1.25; // KEPT 1.25 SIZE
+      const targetBangleWidth = wristWidth * 1.25; 
 
-      // 3. Apply Smoothing (Lerp)
       if (!handSmoother.active) {
           handSmoother.ring = { x: mcp.x, y: mcp.y, angle: targetRingAngle, size: targetRingWidth };
           handSmoother.bangle = { x: wrist.x, y: wrist.y, angle: targetArmAngle, size: targetBangleWidth };
@@ -263,9 +260,7 @@ hands.onResults((results) => {
           canvasCtx.save(); 
           canvasCtx.translate(handSmoother.ring.x, handSmoother.ring.y); 
           canvasCtx.rotate(handSmoother.ring.angle); 
-          
-          // --- UPDATE: ADJUST OFFSET FOR 0.6 SCALE ---
-          // dist = size / 0.6. Offset = dist * 0.15
+          // CurrentDist offset approximation for correct placement
           const currentDist = handSmoother.ring.size / 0.6;
           canvasCtx.drawImage(ringImg, -handSmoother.ring.size/2, currentDist * 0.15, handSmoother.ring.size, rHeight); 
           canvasCtx.restore();
@@ -281,7 +276,6 @@ hands.onResults((results) => {
           canvasCtx.restore();
       }
 
-      // Gesture Control Logic
       if (!autoTryRunning) {
           const now = Date.now();
           if (now - lastGestureTime > GESTURE_COOLDOWN) {
@@ -295,7 +289,7 @@ hands.onResults((results) => {
       }
   } else { 
       previousHandX = null; 
-      handSmoother.active = false; // Reset smoothing when hand is lost
+      handSmoother.active = false; 
   }
   canvasCtx.restore();
 });
@@ -307,9 +301,8 @@ faceMesh.onResults((results) => {
   canvasElement.width = videoElement.videoWidth; canvasElement.height = videoElement.videoHeight;
   canvasCtx.save(); canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
   
-  canvasCtx.globalCompositeOperation = 'overlay';
-  canvasCtx.fillStyle = 'rgba(255, 220, 180, 0.15)'; canvasCtx.fillRect(0,0, canvasElement.width, canvasElement.height);
-  canvasCtx.globalCompositeOperation = 'source-over'; 
+  // --- SKIN SMOOTHING REMOVED ---
+  // The 'overlay' warm filter block has been deleted here.
   
   canvasCtx.translate(canvasElement.width, 0); canvasCtx.scale(-1, 1);
 
@@ -329,11 +322,8 @@ faceMesh.onResults((results) => {
       const distToRight = Math.hypot(nose.x - rightEar.x, nose.y - rightEar.y);
       const ratio = distToLeft / (distToLeft + distToRight);
 
-      // --- EARRING PLACEMENT (PRESERVED) ---
-      // 1. Vertical: -eh * 0.25 (Total 25% lift)
-      // 2. Horizontal: ew * 0.05 (Outer 5% shift)
+      // --- EARRING PLACEMENT ---
       const xShift = ew * 0.05; 
-
       if (ratio > 0.2) { 
           canvasCtx.save(); 
           canvasCtx.translate(leftEar.x, leftEar.y); 
@@ -351,7 +341,6 @@ faceMesh.onResults((results) => {
     }
     if (necklaceImg && necklaceImg.complete) {
       let nw = earDist * 0.85; let nh = (necklaceImg.height/necklaceImg.width) * nw;
-      // --- NECKLACE PLACEMENT (PRESERVED: 10% UP) ---
       canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.1), nw, nh);
     }
   }
