@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Stabilized Rings & Bangles */
+/* script.js - Jewels-Ai Atelier: Anti-Shake Added (Smoothing) */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -32,23 +32,25 @@ const GESTURE_COOLDOWN = 800;
 let previousHandX = null;     
 
 /* Camera State */
-let currentCameraMode = 'user'; // 'user' (Front) or 'environment' (Back)
+let currentCameraMode = 'user'; 
 
 /* Gallery State */
 let currentLightboxIndex = 0;
 
-/* Voice State (New) */
+/* Voice State */
 let recognition = null;
-let voiceEnabled = true; // Default ON
+let voiceEnabled = true;
 
-/* Physics State */
+/* Physics & Smoothing State */
 let physics = { earringVelocity: 0, earringAngle: 0 };
 
-/* --- STABILIZATION STATE (New) --- */
-// Stores the previous positions to smooth out jitter
-let stabilizedRing = { x: 0, y: 0, angle: 0, scale: 0, active: false };
-let stabilizedBangle = { x: 0, y: 0, angle: 0, scale: 0, active: false };
-const SMOOTHING_FACTOR = 0.5; // Lower = Smoother but slower, Higher = Faster but jittery
+// --- NEW SMOOTHING VARIABLES FOR HANDS ---
+const SMOOTH_FACTOR = 0.25; // Lower = smoother, Higher = more responsive
+let handSmoother = {
+    active: false,
+    ring: { x: 0, y: 0, angle: 0, size: 0 },
+    bangle: { x: 0, y: 0, angle: 0, size: 0 }
+};
 
 /* Auto-Try & Gallery */
 let autoTryRunning = false;
@@ -57,6 +59,11 @@ let autoTryIndex = 0;
 let autoTryTimeout = null;
 let currentPreviewData = { url: null, name: 'Jewels-Ai_look.png' }; 
 let pendingDownloadAction = null; 
+
+/* --- HELPER: LERP (Linear Interpolation) --- */
+function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
 
 /* --- 1. FLASH EFFECT --- */
 function triggerFlash() {
@@ -70,33 +77,20 @@ function triggerFlash() {
 /* --- 2. VOICE RECOGNITION AI --- */
 function initVoiceControl() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
     if (SpeechRecognition) {
         recognition = new SpeechRecognition(); 
         recognition.continuous = true; 
         recognition.interimResults = false;
         recognition.lang = 'en-US';
-
-        recognition.onstart = () => { };
-
         recognition.onresult = (event) => {
             const command = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
             processVoiceCommand(command);
         };
-
         recognition.onend = () => {
-            if (voiceEnabled) {
-                setTimeout(() => {
-                    try { recognition.start(); } catch(e) { }
-                }, 1000); 
-            }
+            if (voiceEnabled) { setTimeout(() => { try { recognition.start(); } catch(e) { } }, 1000); }
         };
-
-        recognition.onerror = (event) => { console.warn("Voice Error:", event.error); };
-
         try { recognition.start(); } catch(e) { console.log("Voice start error", e); }
     } else {
-        console.warn("Voice API not supported.");
         const btn = document.getElementById('voice-btn');
         if(btn) btn.style.display = 'none';
     }
@@ -105,17 +99,12 @@ function initVoiceControl() {
 function toggleVoiceControl() {
     const btn = document.getElementById('voice-btn');
     if(!recognition) return;
-
     if (voiceEnabled) {
-        voiceEnabled = false;
-        recognition.stop();
-        btn.innerHTML = '🎙️';
-        btn.classList.add('voice-off');
+        voiceEnabled = false; recognition.stop();
+        btn.innerHTML = '🎙️'; btn.classList.add('voice-off');
     } else {
-        voiceEnabled = true;
-        try { recognition.start(); } catch(e) {}
-        btn.innerHTML = '🎙️';
-        btn.classList.remove('voice-off');
+        voiceEnabled = true; try { recognition.start(); } catch(e) {}
+        btn.innerHTML = '🎙️'; btn.classList.remove('voice-off');
     }
 }
 
@@ -134,7 +123,6 @@ async function fetchFromDrive(category) {
     if (JEWELRY_ASSETS[category]) return;
     const folderId = DRIVE_FOLDERS[category];
     if (!folderId) return;
-
     loadingStatus.style.display = 'block'; loadingStatus.textContent = "Fetching Designs...";
     try {
         const query = `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`;
@@ -142,7 +130,6 @@ async function fetchFromDrive(category) {
         const response = await fetch(url);
         const data = await response.json();
         if (data.error) throw new Error(data.error.message);
-
         JEWELRY_ASSETS[category] = data.files.map(file => {
             const src = file.thumbnailLink ? file.thumbnailLink.replace(/=s\d+$/, "=s3000") : `https://drive.google.com/uc?export=view&id=${file.id}`;
             return { id: file.id, name: file.name, src: src };
@@ -215,20 +202,8 @@ async function shareSingleSnapshot() {
     else alert("Share not supported.");
 }
 
-/* --- 5. PHYSICS & AI CORE --- */
+/* --- 5. PHYSICS & AI CORE (UPDATED WITH SMOOTHING) --- */
 function calculateAngle(p1, p2) { return Math.atan2(p2.y - p1.y, p2.x - p1.x); }
-
-// Helper function for smooth interpolation (Lerp)
-function lerp(start, end, amt) {
-    return (1 - amt) * start + amt * end;
-}
-// Helper to smooth angles correctly (avoids the 360-0 wrap-around glitch)
-function lerpAngle(start, end, amt) {
-    let diff = end - start;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    return start + diff * amt;
-}
 
 const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
 hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
@@ -238,78 +213,74 @@ hands.onResults((results) => {
   const w = canvasElement.width; const h = canvasElement.height;
   canvasCtx.save(); 
 
-  // --- MIRROR LOGIC: Only mirror if Front Camera ('user') ---
   if (currentCameraMode === 'environment') {
-      canvasCtx.translate(0, 0); 
-      canvasCtx.scale(1, 1); 
+      canvasCtx.translate(0, 0); canvasCtx.scale(1, 1); 
   } else {
-      canvasCtx.translate(w, 0); 
-      canvasCtx.scale(-1, 1);
+      canvasCtx.translate(w, 0); canvasCtx.scale(-1, 1);
   }
-  // -----------------------------------------------------------
 
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const lm = results.multiHandLandmarks[0];
+      
+      // --- SMOOTHING LOGIC ---
+      // 1. Calculate TARGET Ring Values
+      const mcp = { x: lm[13].x * w, y: lm[13].y * h }; 
+      const pip = { x: lm[14].x * w, y: lm[14].y * h };
+      const targetRingAngle = calculateAngle(mcp, pip) - (Math.PI / 2);
+      const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
+      const targetRingWidth = dist * 0.5; // KEPT 0.5 SIZE
 
-      // --- STABILIZED RINGS ---
+      // 2. Calculate TARGET Bangle Values
+      const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
+      const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
+      const indexMcp = { x: lm[5].x * w, y: lm[5].y * h };
+      const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
+      const targetArmAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h }) - (Math.PI / 2);
+      const targetBangleWidth = wristWidth * 1.25; // KEPT 1.25 SIZE
+
+      // 3. Apply Smoothing (Lerp)
+      if (!handSmoother.active) {
+          // First frame detected? Snap instantly to avoid flying jewelry
+          handSmoother.ring = { x: mcp.x, y: mcp.y, angle: targetRingAngle, size: targetRingWidth };
+          handSmoother.bangle = { x: wrist.x, y: wrist.y, angle: targetArmAngle, size: targetBangleWidth };
+          handSmoother.active = true;
+      } else {
+          // Subsequent frames? Smooth it out
+          handSmoother.ring.x = lerp(handSmoother.ring.x, mcp.x, SMOOTH_FACTOR);
+          handSmoother.ring.y = lerp(handSmoother.ring.y, mcp.y, SMOOTH_FACTOR);
+          handSmoother.ring.angle = lerp(handSmoother.ring.angle, targetRingAngle, SMOOTH_FACTOR);
+          handSmoother.ring.size = lerp(handSmoother.ring.size, targetRingWidth, SMOOTH_FACTOR);
+
+          handSmoother.bangle.x = lerp(handSmoother.bangle.x, wrist.x, SMOOTH_FACTOR);
+          handSmoother.bangle.y = lerp(handSmoother.bangle.y, wrist.y, SMOOTH_FACTOR);
+          handSmoother.bangle.angle = lerp(handSmoother.bangle.angle, targetArmAngle, SMOOTH_FACTOR);
+          handSmoother.bangle.size = lerp(handSmoother.bangle.size, targetBangleWidth, SMOOTH_FACTOR);
+      }
+
+      // --- DRAW RING ---
       if (ringImg && ringImg.complete) {
-          const mcp = { x: lm[13].x * w, y: lm[13].y * h }; 
-          const pip = { x: lm[14].x * w, y: lm[14].y * h };
-          
-          const rawAngle = calculateAngle(mcp, pip) - (Math.PI / 2);
-          const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
-          const rawWidth = dist * 0.5; // (Size 0.5)
-
-          if (!stabilizedRing.active) {
-              // First detection: Snap instantly
-              stabilizedRing = { x: mcp.x, y: mcp.y, angle: rawAngle, scale: rawWidth, active: true };
-          } else {
-              // Subsequent detections: Smooth dampening
-              stabilizedRing.x = lerp(stabilizedRing.x, mcp.x, SMOOTHING_FACTOR);
-              stabilizedRing.y = lerp(stabilizedRing.y, mcp.y, SMOOTHING_FACTOR);
-              stabilizedRing.angle = lerpAngle(stabilizedRing.angle, rawAngle, SMOOTHING_FACTOR);
-              stabilizedRing.scale = lerp(stabilizedRing.scale, rawWidth, SMOOTHING_FACTOR);
-          }
-
-          const rHeight = (ringImg.height / ringImg.width) * stabilizedRing.scale;
-          
+          const rHeight = (ringImg.height / ringImg.width) * handSmoother.ring.size;
           canvasCtx.save(); 
-          canvasCtx.translate(stabilizedRing.x, stabilizedRing.y); 
-          canvasCtx.rotate(stabilizedRing.angle); 
-          // Note: using raw dist for offset (dist * 0.15) works fine, but scaling is smoothed
-          canvasCtx.drawImage(ringImg, -stabilizedRing.scale/2, dist * 0.15, stabilizedRing.scale, rHeight); 
+          canvasCtx.translate(handSmoother.ring.x, handSmoother.ring.y); 
+          canvasCtx.rotate(handSmoother.ring.angle); 
+          // Kept dist*0.15 offset (approximated by size/0.5 * 0.15 = size * 0.3)
+          // To be safe, we calculate dist from current size: dist = size / 0.5
+          const currentDist = handSmoother.ring.size / 0.5;
+          canvasCtx.drawImage(ringImg, -handSmoother.ring.size/2, currentDist * 0.15, handSmoother.ring.size, rHeight); 
           canvasCtx.restore();
-      } else { stabilizedRing.active = false; }
+      }
 
-      // --- STABILIZED BANGLES ---
+      // --- DRAW BANGLE ---
       if (bangleImg && bangleImg.complete) {
-          const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
-          const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
-          const indexMcp = { x: lm[5].x * w, y: lm[5].y * h }; 
-          
-          const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
-          const rawAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h }) - (Math.PI / 2);
-          const rawWidth = wristWidth * 1.25; // (Size 1.25)
-
-          if (!stabilizedBangle.active) {
-              stabilizedBangle = { x: wrist.x, y: wrist.y, angle: rawAngle, scale: rawWidth, active: true };
-          } else {
-              stabilizedBangle.x = lerp(stabilizedBangle.x, wrist.x, SMOOTHING_FACTOR);
-              stabilizedBangle.y = lerp(stabilizedBangle.y, wrist.y, SMOOTHING_FACTOR);
-              stabilizedBangle.angle = lerpAngle(stabilizedBangle.angle, rawAngle, SMOOTHING_FACTOR);
-              stabilizedBangle.scale = lerp(stabilizedBangle.scale, rawWidth, SMOOTHING_FACTOR);
-          }
-
-          const bHeight = (bangleImg.height / bangleImg.width) * stabilizedBangle.scale;
-          
+          const bHeight = (bangleImg.height / bangleImg.width) * handSmoother.bangle.size;
           canvasCtx.save(); 
-          canvasCtx.translate(stabilizedBangle.x, stabilizedBangle.y); 
-          canvasCtx.rotate(stabilizedBangle.angle);
-          canvasCtx.drawImage(bangleImg, -stabilizedBangle.scale/2, -bHeight/2, stabilizedBangle.scale, bHeight); 
+          canvasCtx.translate(handSmoother.bangle.x, handSmoother.bangle.y); 
+          canvasCtx.rotate(handSmoother.bangle.angle);
+          canvasCtx.drawImage(bangleImg, -handSmoother.bangle.size/2, -bHeight/2, handSmoother.bangle.size, bHeight); 
           canvasCtx.restore();
-      } else { stabilizedBangle.active = false; }
+      }
 
-      // Gesture Logic
+      // Gesture Control Logic
       if (!autoTryRunning) {
           const now = Date.now();
           if (now - lastGestureTime > GESTURE_COOLDOWN) {
@@ -323,8 +294,7 @@ hands.onResults((results) => {
       }
   } else { 
       previousHandX = null; 
-      stabilizedRing.active = false;
-      stabilizedBangle.active = false;
+      handSmoother.active = false; // Reset smoothing when hand is lost
   }
   canvasCtx.restore();
 });
@@ -340,7 +310,6 @@ faceMesh.onResults((results) => {
   canvasCtx.fillStyle = 'rgba(255, 220, 180, 0.15)'; canvasCtx.fillRect(0,0, canvasElement.width, canvasElement.height);
   canvasCtx.globalCompositeOperation = 'source-over'; 
   
-  // Face always mirrors because it's always Front Camera in this logic
   canvasCtx.translate(canvasElement.width, 0); canvasCtx.scale(-1, 1);
 
   if (results.multiFaceLandmarks && results.multiFaceLandmarks[0]) {
@@ -381,55 +350,32 @@ faceMesh.onResults((results) => {
     }
     if (necklaceImg && necklaceImg.complete) {
       let nw = earDist * 0.85; let nh = (necklaceImg.height/necklaceImg.width) * nw;
-      // --- NECKLACE PLACEMENT (PRESERVED) ---
-      // Offset (earDist*0.1) to lift it 10% upwards
+      // --- NECKLACE PLACEMENT (PRESERVED: 10% UP) ---
       canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.1), nw, nh);
     }
   }
   canvasCtx.restore();
 });
 
-/* --- INIT CAMERA (UPDATED) --- */
+/* --- INIT CAMERA --- */
 async function startCameraFast(mode = 'user') {
-    // Prevent switching if already on the correct mode and active
     if (videoElement.srcObject && currentCameraMode === mode && videoElement.readyState >= 2) return;
-
     currentCameraMode = mode;
     loadingStatus.style.display = 'block';
     loadingStatus.textContent = mode === 'environment' ? "Switching to Back Camera..." : "Switching to Selfie Camera...";
-
-    // Stop existing stream
-    if (videoElement.srcObject) {
-        const tracks = videoElement.srcObject.getTracks();
-        tracks.forEach(track => track.stop());
-    }
-
-    // Toggle mirror class for CSS (you must add .no-mirror { transform: none !important; } to CSS)
-    if (mode === 'environment') {
-        videoElement.classList.add('no-mirror');
-    } else {
-        videoElement.classList.remove('no-mirror');
-    }
+    if (videoElement.srcObject) { videoElement.srcObject.getTracks().forEach(track => track.stop()); }
+    if (mode === 'environment') { videoElement.classList.add('no-mirror'); } else { videoElement.classList.remove('no-mirror'); }
 
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                width: { ideal: 1280 }, 
-                height: { ideal: 720 }, 
-                facingMode: mode // 'user' or 'environment'
-            } 
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: mode } 
         });
         videoElement.srcObject = stream;
         videoElement.onloadeddata = () => { 
-            videoElement.play(); 
-            loadingStatus.style.display = 'none'; 
-            detectLoop(); 
-            if(!recognition) initVoiceControl(); 
+            videoElement.play(); loadingStatus.style.display = 'none'; 
+            detectLoop(); if(!recognition) initVoiceControl(); 
         };
-    } catch (err) { 
-        alert("Camera Error: " + err.message); 
-        loadingStatus.textContent = "Camera Error";
-    }
+    } catch (err) { alert("Camera Error: " + err.message); loadingStatus.textContent = "Camera Error"; }
 }
 
 async function detectLoop() {
@@ -440,7 +386,7 @@ async function detectLoop() {
     requestAnimationFrame(detectLoop);
 }
 
-window.onload = () => startCameraFast('user'); // Default to Selfie
+window.onload = () => startCameraFast('user'); 
 
 /* --- UI HELPERS --- */
 function navigateJewelry(dir) {
@@ -458,11 +404,8 @@ function navigateJewelry(dir) {
 
 async function selectJewelryType(type) {
   currentType = type;
-
-  // --- AUTOMATIC CAMERA SWITCHING ---
   const targetMode = (type === 'rings' || type === 'bangles') ? 'environment' : 'user';
   await startCameraFast(targetMode);
-  // ----------------------------------
 
   if(type !== 'earrings') earringImg = null; if(type !== 'chains') necklaceImg = null;
   if(type !== 'rings') ringImg = null; if(type !== 'bangles') bangleImg = null;
@@ -520,21 +463,14 @@ function captureToGallery() {
   const tempCanvas = document.createElement('canvas'); tempCanvas.width = videoElement.videoWidth; tempCanvas.height = videoElement.videoHeight;
   const tempCtx = tempCanvas.getContext('2d');
   
-  // --- CAPTURE MIRRORING: Match the current camera mode ---
   if (currentCameraMode === 'environment') {
-      tempCtx.translate(0, 0); 
-      tempCtx.scale(1, 1); 
+      tempCtx.translate(0, 0); tempCtx.scale(1, 1); 
   } else {
-      tempCtx.translate(tempCanvas.width, 0); 
-      tempCtx.scale(-1, 1); 
+      tempCtx.translate(tempCanvas.width, 0); tempCtx.scale(-1, 1); 
   }
-  // --------------------------------------------------------
 
   tempCtx.drawImage(videoElement, 0, 0);
-  
-  // Reset for overlays so text is readable
   tempCtx.setTransform(1, 0, 0, 1, 0, 0); 
-  
   try { tempCtx.drawImage(canvasElement, 0, 0); } catch(e) {}
   
   let displayName = "Jewels-Ai Look";
@@ -546,8 +482,7 @@ function captureToGallery() {
       if (currentImgObj) {
           const idx = PRELOADED_IMAGES[currentType].indexOf(currentImgObj);
           if (idx !== -1 && JEWELRY_ASSETS[currentType] && JEWELRY_ASSETS[currentType][idx]) {
-              displayName = JEWELRY_ASSETS[currentType][idx].name;
-              displayName = displayName.replace(/\.[^/.]+$/, "");
+              displayName = JEWELRY_ASSETS[currentType][idx].name.replace(/\.[^/.]+$/, "");
           }
       }
   }
@@ -570,17 +505,15 @@ function takeSnapshot() {
     document.getElementById('preview-image').src = shotData.url; document.getElementById('preview-modal').style.display = 'flex'; 
 }
 
-/* --- LIGHTBOX LOGIC --- */
+/* --- LIGHTBOX & GALLERY UI --- */
 function changeLightboxImage(direction) {
     if (autoSnapshots.length === 0) return;
     currentLightboxIndex = (currentLightboxIndex + direction + autoSnapshots.length) % autoSnapshots.length;
     document.getElementById('lightbox-image').src = autoSnapshots[currentLightboxIndex].url;
 }
 
-/* --- GALLERY UI LOGIC --- */
 function showGallery() {
   const grid = document.getElementById('gallery-grid'); grid.innerHTML = '';
-  
   if (autoSnapshots.length === 0) {
       grid.innerHTML = '<p style="color:#666; width:100%; text-align:center;">No photos yet.</p>';
   } else {
@@ -588,19 +521,14 @@ function showGallery() {
         const card = document.createElement('div'); card.className = "gallery-card";
         const img = document.createElement('img'); img.src = item.url; img.className = "gallery-img";
         const overlay = document.createElement('div'); overlay.className = "gallery-overlay";
-        
         let cleanName = item.name.replace("Jewels-Ai_", "").replace(".png", "").replace(/_\d+$/, "");
         if(cleanName.length > 15) cleanName = cleanName.substring(0,12) + "...";
-        
         overlay.innerHTML = `<span class="overlay-text">${cleanName}</span><div class="overlay-icon">👁️</div>`;
-
-        // Update click to set index
         card.onclick = () => { 
             currentLightboxIndex = index;
             document.getElementById('lightbox-image').src = item.url; 
             document.getElementById('lightbox-overlay').style.display = 'flex'; 
         };
-        
         card.appendChild(img); card.appendChild(overlay); grid.appendChild(card);
       });
   }
