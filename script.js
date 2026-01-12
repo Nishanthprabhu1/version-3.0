@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Fast Snap & Anti-Flicker */
+/* script.js - Jewels-Ai Atelier: Auto-Load First Product & Fast Snap */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -45,8 +45,7 @@ let voiceEnabled = true;
 let physics = { earringVelocity: 0, earringAngle: 0 };
 
 /* --- STABILIZER VARIABLES --- */
-// 0.8 = Very Fast Snap (Removes flicker, keeps speed). 
-// 0.1 = Slow Glide.
+// 0.8 = Very Fast Snap (Removes flicker, keeps speed)
 const SMOOTH_FACTOR = 0.8; 
 
 let handSmoother = {
@@ -243,7 +242,7 @@ hands.onResults((results) => {
       // --- BANGLE SIZE: 1.25 ---
       const targetBangleWidth = wristWidth * 1.25; 
 
-      // Apply Fast Stabilization (No flickering, but snaps fast)
+      // Apply Fast Stabilization
       if (!handSmoother.active) {
           handSmoother.ring = { x: mcp.x, y: mcp.y, angle: targetRingAngle, size: targetRingWidth };
           handSmoother.bangle = { x: wrist.x, y: wrist.y, angle: targetArmAngle, size: targetBangleWidth };
@@ -350,7 +349,7 @@ faceMesh.onResults((results) => {
   canvasCtx.restore();
 });
 
-/* --- INIT CAMERA --- */
+/* --- INIT CAMERA & AUTO-LOAD --- */
 async function startCameraFast(mode = 'user') {
     if (videoElement.srcObject && currentCameraMode === mode && videoElement.readyState >= 2) return;
     currentCameraMode = mode;
@@ -379,7 +378,8 @@ async function detectLoop() {
     requestAnimationFrame(detectLoop);
 }
 
-window.onload = () => startCameraFast('user'); 
+// --- UPDATED ONLOAD: Load Earrings Immediately ---
+window.onload = () => selectJewelryType('earrings'); 
 
 /* --- UI HELPERS --- */
 function navigateJewelry(dir) {
