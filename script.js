@@ -1,4 +1,4 @@
-/* script.js - Jewels-Ai Atelier: Instant Tracking (No Smoothing) */
+/* script.js - Jewels-Ai Atelier: Fast Snap & Anti-Flicker */
 
 /* --- CONFIGURATION --- */
 const API_KEY = "AIzaSyAXG3iG2oQjUA_BpnO8dK8y-MHJ7HLrhyE"; 
@@ -44,6 +44,17 @@ let voiceEnabled = true;
 /* Physics State */
 let physics = { earringVelocity: 0, earringAngle: 0 };
 
+/* --- STABILIZER VARIABLES --- */
+// 0.8 = Very Fast Snap (Removes flicker, keeps speed). 
+// 0.1 = Slow Glide.
+const SMOOTH_FACTOR = 0.8; 
+
+let handSmoother = {
+    active: false,
+    ring: { x: 0, y: 0, angle: 0, size: 0 },
+    bangle: { x: 0, y: 0, angle: 0, size: 0 }
+};
+
 /* Auto-Try & Gallery */
 let autoTryRunning = false;
 let autoSnapshots = [];
@@ -51,6 +62,11 @@ let autoTryIndex = 0;
 let autoTryTimeout = null;
 let currentPreviewData = { url: null, name: 'Jewels-Ai_look.png' }; 
 let pendingDownloadAction = null; 
+
+/* --- HELPER: LERP (Linear Interpolation) --- */
+function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
 
 /* --- 1. FLASH EFFECT --- */
 function triggerFlash() {
@@ -209,45 +225,62 @@ hands.onResults((results) => {
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
       const lm = results.multiHandLandmarks[0];
       
-      // --- DRAW RING (DIRECT - FAST) ---
+      // --- FAST STABILIZER LOGIC ---
+      const mcp = { x: lm[13].x * w, y: lm[13].y * h }; 
+      const pip = { x: lm[14].x * w, y: lm[14].y * h };
+      const targetRingAngle = calculateAngle(mcp, pip) - (Math.PI / 2);
+      const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
+      
+      // --- RING SIZE: 0.6 ---
+      const targetRingWidth = dist * 0.6; 
+
+      const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
+      const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
+      const indexMcp = { x: lm[5].x * w, y: lm[5].y * h };
+      const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
+      const targetArmAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h }) - (Math.PI / 2);
+      
+      // --- BANGLE SIZE: 1.25 ---
+      const targetBangleWidth = wristWidth * 1.25; 
+
+      // Apply Fast Stabilization (No flickering, but snaps fast)
+      if (!handSmoother.active) {
+          handSmoother.ring = { x: mcp.x, y: mcp.y, angle: targetRingAngle, size: targetRingWidth };
+          handSmoother.bangle = { x: wrist.x, y: wrist.y, angle: targetArmAngle, size: targetBangleWidth };
+          handSmoother.active = true;
+      } else {
+          handSmoother.ring.x = lerp(handSmoother.ring.x, mcp.x, SMOOTH_FACTOR);
+          handSmoother.ring.y = lerp(handSmoother.ring.y, mcp.y, SMOOTH_FACTOR);
+          handSmoother.ring.angle = lerp(handSmoother.ring.angle, targetRingAngle, SMOOTH_FACTOR);
+          handSmoother.ring.size = lerp(handSmoother.ring.size, targetRingWidth, SMOOTH_FACTOR);
+
+          handSmoother.bangle.x = lerp(handSmoother.bangle.x, wrist.x, SMOOTH_FACTOR);
+          handSmoother.bangle.y = lerp(handSmoother.bangle.y, wrist.y, SMOOTH_FACTOR);
+          handSmoother.bangle.angle = lerp(handSmoother.bangle.angle, targetArmAngle, SMOOTH_FACTOR);
+          handSmoother.bangle.size = lerp(handSmoother.bangle.size, targetBangleWidth, SMOOTH_FACTOR);
+      }
+
+      // --- DRAW RING ---
       if (ringImg && ringImg.complete) {
-          const mcp = { x: lm[13].x * w, y: lm[13].y * h }; 
-          const pip = { x: lm[14].x * w, y: lm[14].y * h };
-          const angle = calculateAngle(mcp, pip); 
-          const dist = Math.hypot(pip.x - mcp.x, pip.y - mcp.y);
-          
-          // Size 0.6
-          const rWidth = dist * 0.6; 
-          const rHeight = (ringImg.height / ringImg.width) * rWidth;
-          
+          const rHeight = (ringImg.height / ringImg.width) * handSmoother.ring.size;
           canvasCtx.save(); 
-          canvasCtx.translate(mcp.x, mcp.y); 
-          canvasCtx.rotate(angle - (Math.PI / 2)); 
-          // Offset based on dist (standard)
-          canvasCtx.drawImage(ringImg, -rWidth/2, dist * 0.15, rWidth, rHeight); 
+          canvasCtx.translate(handSmoother.ring.x, handSmoother.ring.y); 
+          canvasCtx.rotate(handSmoother.ring.angle); 
+          const currentDist = handSmoother.ring.size / 0.6;
+          canvasCtx.drawImage(ringImg, -handSmoother.ring.size/2, currentDist * 0.15, handSmoother.ring.size, rHeight); 
           canvasCtx.restore();
       }
 
-      // --- DRAW BANGLE (DIRECT - FAST) ---
+      // --- DRAW BANGLE ---
       if (bangleImg && bangleImg.complete) {
-          const wrist = { x: lm[0].x * w, y: lm[0].y * h }; 
-          const pinkyMcp = { x: lm[17].x * w, y: lm[17].y * h };
-          const indexMcp = { x: lm[5].x * w, y: lm[5].y * h };
-          const wristWidth = Math.hypot(pinkyMcp.x - indexMcp.x, pinkyMcp.y - indexMcp.y);
-          const armAngle = calculateAngle(wrist, { x: lm[9].x * w, y: lm[9].y * h });
-          
-          // Size 1.25
-          const bWidth = wristWidth * 1.25; 
-          const bHeight = (bangleImg.height / bangleImg.width) * bWidth;
-          
+          const bHeight = (bangleImg.height / bangleImg.width) * handSmoother.bangle.size;
           canvasCtx.save(); 
-          canvasCtx.translate(wrist.x, wrist.y); 
-          canvasCtx.rotate(armAngle - (Math.PI / 2));
-          canvasCtx.drawImage(bangleImg, -bWidth/2, -bHeight/2, bWidth, bHeight); 
+          canvasCtx.translate(handSmoother.bangle.x, handSmoother.bangle.y); 
+          canvasCtx.rotate(handSmoother.bangle.angle);
+          canvasCtx.drawImage(bangleImg, -handSmoother.bangle.size/2, -bHeight/2, handSmoother.bangle.size, bHeight); 
           canvasCtx.restore();
       }
 
-      // Gesture Control Logic
       if (!autoTryRunning) {
           const now = Date.now();
           if (now - lastGestureTime > GESTURE_COOLDOWN) {
@@ -259,7 +292,10 @@ hands.onResults((results) => {
               if (now - lastGestureTime > 100) previousHandX = indexTip.x;
           }
       }
-  } else { previousHandX = null; }
+  } else { 
+      previousHandX = null; 
+      handSmoother.active = false; 
+  }
   canvasCtx.restore();
 });
 
@@ -269,8 +305,6 @@ faceMesh.onResults((results) => {
   isProcessingFace = false; if(loadingStatus.style.display !== 'none') loadingStatus.style.display = 'none';
   canvasElement.width = videoElement.videoWidth; canvasElement.height = videoElement.videoHeight;
   canvasCtx.save(); canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  
-  // No Skin Smoothing Filter
   
   canvasCtx.translate(canvasElement.width, 0); canvasCtx.scale(-1, 1);
 
@@ -290,7 +324,7 @@ faceMesh.onResults((results) => {
       const distToRight = Math.hypot(nose.x - rightEar.x, nose.y - rightEar.y);
       const ratio = distToLeft / (distToLeft + distToRight);
 
-      // --- EARRING PLACEMENT (Preserved: Up 25%, Out 5%) ---
+      // --- EARRING PLACEMENT (Preserved) ---
       const xShift = ew * 0.05; 
       if (ratio > 0.2) { 
           canvasCtx.save(); 
@@ -309,7 +343,7 @@ faceMesh.onResults((results) => {
     }
     if (necklaceImg && necklaceImg.complete) {
       let nw = earDist * 0.85; let nh = (necklaceImg.height/necklaceImg.width) * nw;
-      // --- NECKLACE PLACEMENT (Preserved: 10% Up) ---
+      // --- NECKLACE PLACEMENT (Preserved) ---
       canvasCtx.drawImage(necklaceImg, neck.x - nw/2, neck.y + (earDist*0.1), nw, nh);
     }
   }
